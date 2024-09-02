@@ -3,7 +3,9 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"math/rand"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -44,20 +46,52 @@ var (
 	}
 )
 
+func generateTr(c Client) {
+	//выбираем случайного клиента и проверяем, чтобы это не был тот же самый клиент
+	var (
+		randClientID int
+		randAmount   float64
+	)
+	for {
+		randClientID = rand.Intn(len(clients)) + 1 //[1;len(clients)] -> randIntn(len(clients)-1+1)+1
+		if randClientID != c.ID {
+			break
+		}
+	}
+	//выбираем рандомно тип счета для транзакции
+	typesOfAccount := []string{"credit", "debit"}
+	typeOfAccount := typesOfAccount[rand.Intn(len(typesOfAccount))]
+	if typeOfAccount == "credit" {
+		randAmount = rand.Float64()*(c.CreditAccount) + 1 // [1;c.CreditAccount]
+	} else {
+		randAmount = rand.Float64()*(c.DebitAccount) + 1
+	}
+	tr := Transaction{c.ID, randClientID, randAmount, typeOfAccount}
+	trProcessing(tr)
+
+}
+
 func trProcessing(tr Transaction) {
 	m.Lock()
 	defer m.Unlock()
+	if _, ok := clients[tr.SrcClientId]; !ok {
+		clients[tr.SrcClientId] = Client{tr.SrcClientId, 0, 0}
+		return //транзакция в любом случае будет невозможна, тк у клиента оба баланса 0
+	}
+	if _, ok := clients[tr.DstClientId]; !ok {
+		clients[tr.DstClientId] = Client{tr.DstClientId, 0, 0}
+	}
 	scrClient := clients[tr.SrcClientId]
 	dstClient := clients[tr.DstClientId]
-	if tr.Type == "credit" {
+	switch tr.Type {
+	case "credit":
 		if scrClient.CreditAccount-tr.Amount < 0 {
 			fmt.Printf("client %d CreditAccount is not enough\n", tr.SrcClientId)
 		} else {
 			scrClient.CreditAccount -= tr.Amount
 			dstClient.CreditAccount += tr.Amount
 		}
-
-	} else {
+	case "debit":
 		if scrClient.DebitAccount-tr.Amount < 0 {
 			fmt.Printf("client %d DebitAccount is not enough\n", tr.SrcClientId)
 
@@ -65,13 +99,28 @@ func trProcessing(tr Transaction) {
 			scrClient.DebitAccount -= tr.Amount
 			dstClient.DebitAccount += tr.Amount
 		}
+	default:
+		fmt.Printf("incorrect type %s", tr.Type)
+		return
 	}
 	clients[tr.SrcClientId] = scrClient
 	clients[tr.DstClientId] = dstClient
 }
 
+func Clear() {
+	//exec.Command - создание объекта cmd
+	//1) cmd - испольняемый файл - интерпретатор командной строки Windows
+	//2) /c - выполнить команду и завершиться
+	//3) cls - очистка ком строки в Windows
+	cmd := exec.Command("cmd", "/c", "cls") //Windows example, its tested
+	//определяем, куда выводятся данные - моя консоль
+	cmd.Stdout = os.Stdout
+	cmd.Run()
+
+}
+
 func main() {
-	ticker := time.NewTicker(time.Second)
+	ticker := time.NewTicker(5 * time.Second)
 	for _, tr := range transactions {
 		wg.Add(1)
 		go func(tr Transaction) {
@@ -81,6 +130,7 @@ func main() {
 	}
 	wg.Wait()
 
+	//возможность добавления новых транзакций в процессе выполнения программы
 	go func() {
 		reader := bufio.NewReader(os.Stdin)
 		for {
@@ -94,8 +144,13 @@ func main() {
 	}()
 
 	for range ticker.C {
-		for _, client := range clients {
-			fmt.Printf("client %d has CreditAccount %f and DebitAccount %f\n", client.ID, client.CreditAccount, client.DebitAccount)
+		Clear()
+		//каждые 5 сек генерируем транзакции для каждого клиента
+		for _, cl := range clients {
+			generateTr(cl)
+		}
+		for id, client := range clients {
+			fmt.Printf("ClientId: %d [Credit: %.2f, Debit: %.2f]\n", id, client.CreditAccount, client.DebitAccount)
 		}
 	}
 }
